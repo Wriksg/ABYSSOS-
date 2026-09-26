@@ -2,6 +2,7 @@ import os
 import argparse
 import csv
 import torch
+import numpy as np   # <--- ADDED THIS LINE
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
@@ -19,34 +20,32 @@ from core.model.losses import (
 )
 
 # ---------------------------------------------------------
-# 1. DATASET MOCK (Replace __getitem__ logic with Backend-1's real loader)
+# 1. REAL DATASET LOADER
 # ---------------------------------------------------------
 class AbyssosDataset(Dataset):
-    def __init__(self, data_dir, split="train", K=4, C=4, size=64):
-        self.data_dir = data_dir
-        self.split = split
-        self.K = K
-        self.size = size
-        self.C = C
-        # Fake length for demo. In reality: len(list(Path(data_dir).glob("*.npz")))
-        self.length = 100 if split == "train" else 20 
+    def __init__(self, data_dir, split="train"):
+        self.data_dir = os.path.join(data_dir, split)
+        # Get all .npz files in the directory
+        if os.path.exists(self.data_dir):
+            self.files = [os.path.join(self.data_dir, f) for f in os.listdir(self.data_dir) if f.endswith('.npz')]
+        else:
+            self.files = []
 
     def __len__(self):
-        return self.length
+        return len(self.files)
 
     def __getitem__(self, idx):
-        # MOCKING THE HARVESTER CONTRACT
-        # In reality, you'd load your .npz / .tif files here
-        H, W = self.size, self.size
-        scale = 4
+        # Load the real satellite data array from disk
+        data = np.load(self.files[idx])
         
+        # Convert numpy arrays to PyTorch tensors
         return {
-            "lrs": torch.rand(self.K, self.C, H, W),
-            "masks": torch.ones(self.K, 1, H, W),
-            "shifts": torch.rand(self.K, 2) * 2.0 - 1.0,
-            "sar": torch.rand(2, H, W),
-            "clear_fraction": torch.tensor([0.8]),
-            "hr": torch.rand(self.C, H * scale, W * scale) # Ground truth
+            "lrs": torch.from_numpy(data['lrs']).float(),                
+            "masks": torch.from_numpy(data['masks']).float(),            
+            "shifts": torch.from_numpy(data['shifts']).float(),          
+            "sar": torch.from_numpy(data['sar']).float(),                
+            "clear_fraction": torch.from_numpy(data['clear_fraction']).float(), 
+            "hr": torch.from_numpy(data['hr']).float()                   
         }
 
 # ---------------------------------------------------------
