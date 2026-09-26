@@ -1,0 +1,24 @@
+# Ábyssos - Main Experiment Configuration
+
+experiment_name: "abyssos_main"
+
+data:
+  K: 4                  # NUMBER OF PASSES (Change this to 2, 4, or 8 for the Ablation Sweep)
+  scale: 4
+  mtf_sigma_hr: 2.1     # Sensor MTF blur (from Sentinel-2 specs)
+
+model:
+  sar_enabled: true     # Set to false for "No SAR" ablation
+  num_optical_bands: 4
+  num_sar_bands: 2
+
+loss_weights:
+  shift_tolerant_l1: 1.0
+  consistency: 0.5      # Set to 0.0 for "No Consistency" ablation
+  sam: 0.2
+  gradient: 0.1
+
+training:
+  epochs: 100
+  batch_size: 8
+  learning_rate: 0.0001
