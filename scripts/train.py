@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -82,7 +82,7 @@ def main():
     model = MFSR(num_optical_bands=4, num_sar_bands=2, scale=4).to(device)
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
 
     # Logging setup
     csv_file = open(os.path.join(args.out, "metrics.csv"), "w", newline="")
@@ -105,7 +105,7 @@ def main():
 
             optimizer.zero_grad()
 
-            with autocast():
+            with autocast('cuda'):
                 sr, _ = model(lrs, masks, sar, clear_frac)
                 
                 # The combined loss from the contract
@@ -140,7 +140,7 @@ def main():
                 clear_frac = batch["clear_fraction"].to(device)
                 hr = batch["hr"].to(device)
 
-                with autocast():
+                with autocast('cuda'):
                     sr, _ = model(lrs, masks, sar, clear_frac)
                     
                     l_l1 = shift_tolerant_l1(sr, hr)
