@@ -1,0 +1,7 @@
+abyssos_data/
+abyssos_weights/
+abyssos_calibration_data/
+ui_layers/
+eval_visuals/
+weights/
+__pycache__/
