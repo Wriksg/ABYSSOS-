@@ -29,7 +29,7 @@ def main():
     SCALE = 4
     HR_SIZE = 256    
     
-    num_tiles = 50
+    num_tiles = 200
     tiles_saved = 0
     
     print(f"🔥 Generating {num_tiles} synthetic multi-frame stacks from real satellite data...")
