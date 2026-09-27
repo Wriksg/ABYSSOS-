@@ -1,0 +1,13 @@
+{
+    "tau_c": 0.0366581454873085,
+    "tau_v": 0.4865735484608292,
+    "tau_a": 0.5,
+    "metrics": {
+        "real_auroc": 0.7296795957947737,
+        "calibrated_precision_pct": 51.413599080714825,
+        "calibrated_coverage_pct": 15.403442382812498,
+        "n_tiles_used": 10,
+        "baseline_precision_pct": 25.0
+    },
+    "warning": "Calibrated at constrained precision due to synthetic domain gap."
+}
