@@ -46,7 +46,7 @@ def attribute(ar, x, y, taus, radius=8):
     # Calculate Evidence Class
     # STOPGAP: SAR 'a' is set to None.
     ev_map = classify(ar.c, ar.v, None, taus)
-    ev_class = int(ev_map[y, x].item())
+    ev_class = int(ev_map.squeeze()[y, x].item())
     class_names = ["VERIFIED", "SAR_SUPPORTED", "PRIOR_ONLY"]
     
     return {
