@@ -5,3 +5,4 @@ ui_layers/
 eval_visuals/
 weights/
 __pycache__/
+.env
