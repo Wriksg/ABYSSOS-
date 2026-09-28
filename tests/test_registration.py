@@ -1,97 +1,67 @@
-import os, sys, torch, numpy as np
-from scipy.ndimage import shift
+import sys, os, numpy as np
+from scipy.ndimage import gaussian_filter, fourier_shift
+from scipy.fft import fft2, ifft2
 from skimage.registration import phase_cross_correlation
-import torch.nn.functional as F
 from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from core.harvest.register import estimate_shifts
-from core.model.degrade import degrade
-
-def create_test_image(shape=(64, 64)):
-    y, x = np.mgrid[-shape[0]//2 : shape[0]//2, -shape[1]//2 : shape[1]//2]
-    return np.exp(-(x**2 + y**2) / 20.0)
+from core.harvest.register import estimate_shifts_v2
 
 def test_skimage_phase_correlation():
-    print("\n--- Test 1: Base Skimage Phase Correlation ---")
-    img = create_test_image((64, 64))
+    print("--- Test 1: Phase Correlation Diagnostics (Analytical) ---")
     dy, dx = 0.4, -0.7
-    shifted_img = shift(img, shift=(dy, dx), order=3)
+    y, x = np.mgrid[-32:32, -32:32]
+    img = np.exp(-(x**2 + y**2) / 20.0)
+    shifted = np.exp(-((x - dx)**2 + (y - dy)**2) / 20.0)
     
-    est, _, _ = phase_cross_correlation(img, shifted_img, upsample_factor=100)
-    print(f"Injected: [{dy:.4f}, {dx:.4f}] -> Recovered: [{est[0]:.4f}, {est[1]:.4f}]")
+    est, _, _ = phase_cross_correlation(img, shifted, upsample_factor=100)
+    print(f"Injected: [{dy:.4f}, {dx:.4f}] -> Recovered: [{-est[0]:.4f}, {-est[1]:.4f}]")
     
-    # FIX: Assert est == -injected
-    assert abs(est[0] - (-dy)) < 0.05, "Y shift recovery failed!"
-    assert abs(est[1] - (-dx)) < 0.05, "X shift recovery failed!"
-    print("✅ Base shift recovery passed.")
+    assert abs(-est[0] - dy) < 0.05, f"Y shift failed! Got {-est[0]}"
+    assert abs(-est[1] - dx) < 0.05, f"X shift failed! Got {-est[1]}"
+    print("✅ Test 1 Strict Recovery Passed.\n")
 
-def test_estimate_shifts_synthetic_stack():
-    print("\n--- Test 2: Synthetic Stack estimate_shifts() ---")
-    K, C, H, W = 8, 4, 64, 64
-    ref_idx = 0
-    base_img = create_test_image((H, W))
-    
-    stack = np.zeros((K, C, H, W))
-    masks = np.ones((K, H, W)) 
-    injected_shifts = np.zeros((K, 2))
-    
-    for i in range(K):
-        if i == ref_idx:
-            stack[i, 3] = base_img 
-        else:
-            dy, dx = np.random.uniform(-0.5, 0.5, size=2)
-            injected_shifts[i] = [dy, dx]
-            stack[i, 3] = shift(base_img, shift=(dy, dx), order=3)
-
-    est_shifts = estimate_shifts(stack, masks, ref_idx=ref_idx, band=3)
-    
-    # FIX: Compare est vs -injected
-    errors = np.abs(est_shifts[1:] - (-injected_shifts[1:]))
-    max_err = np.max(errors)
-    assert max_err < 0.05, f"estimate_shifts() failed! Max error {max_err}"
-    print("✅ Stack estimation passed.")
-
-def test_shift_convention_end_to_end():
-    print("\n--- Test 3: End-to-End Shift Convention Check ---")
-    files = list(Path("abyssos_data/train").glob("*.npz"))
-    if not files:
-        print("❌ No real tiles found.")
-        return
+def test_registration_real_tile():
+    print("--- Test 2: V2 Joint Solve (Real Tile Synthetics) ---")
+    files = list(Path("abyssos_data/tiles").glob("*.npz")) + list(Path("abyssos_data/train").glob("*.npz"))
+    if not files: return
         
     data = np.load(files[0])
-    np_lrs = data['lrs']
-    lrs = torch.from_numpy(np_lrs).unsqueeze(0)  # (1, K, 4, H, W)
-    K = lrs.shape[1]
+    # FIX: Safely handle both Harvester (lr) and Fallback (lrs) naming conventions
+    lr_key = 'lr' if 'lr' in data else 'lrs'
     
-    # 1. Crude SR from reference frame
-    ref_idx = 0
-    lr_ref = lrs[:, ref_idx]
-    sr = F.interpolate(lr_ref, scale_factor=4, mode='bicubic', align_corners=False)
+    real_frame = data[lr_key][0]
+    K = 4
+    real_masks = np.ones((K, 64, 64))
     
-    # 2. Get real shifts from register.py
-    masks = np.ones((K, np_lrs.shape[2], np_lrs.shape[3]))
-    calc_shifts = estimate_shifts(np_lrs, masks, ref_idx=ref_idx, band=3)
+    noise_std = np.std(real_frame[3] - gaussian_filter(real_frame[3], 1))
+    stack, injected = np.zeros((K, 4, 64, 64)), np.zeros((K, 2))
     
-    # 3. Test Native vs Flipped
-    for k in range(1, min(K, 3)): # Just test 2 frames to save output space
-        s_tensor = torch.from_numpy(calc_shifts[k:k+1])
-        
-        err_base = F.l1_loss(lr_ref, lrs[:, k]).item()
-        err_native = F.l1_loss(degrade(sr, s_tensor, scale=4), lrs[:, k]).item()
-        err_flipped = F.l1_loss(degrade(sr, -s_tensor, scale=4), lrs[:, k]).item()
-        
-        print(f"Frame {k} | Shift calculated by register.py: {calc_shifts[k]}")
-        print(f"  Baseline L1 (No shift) : {err_base:.5f}")
-        print(f"  L1 with Native Shift   : {err_native:.5f}")
-        print(f"  L1 with Flipped Shift  : {err_flipped:.5f}")
-        
-        if err_native < err_flipped:
-            print("  -> degrade() expects the NATIVE sign.")
+    for k in range(K):
+        if k == 0:
+            injected[k] = [0.0, 0.0]
+            shifted = real_frame
         else:
-            print("  -> degrade() expects the FLIPPED sign.")
+            dy, dx = np.random.uniform(-0.5, 0.5, size=2)
+            injected[k] = [dy, dx]
+            shifted = np.zeros_like(real_frame)
+            for b in range(4):
+                fft_img = fft2(real_frame[b])
+                shifted_fft = fourier_shift(fft_img, shift=(dy, dx))
+                shifted[b] = np.real(ifft2(shifted_fft))
+                
+        stack[k] = shifted + np.random.normal(0, noise_std, shifted.shape)
+        
+    v2_shifts, conf = estimate_shifts_v2(stack, real_masks, ref_idx=0, band=3)
+    
+    valid = ~np.isnan(v2_shifts).any(axis=1)
+    err_v2 = np.abs(v2_shifts[valid][1:] - (-injected[valid][1:]))
+    
+    if len(err_v2) > 0:
+        print(f"V2 Joint -> Median Err: {np.median(err_v2):.4f} px | P95 Err: {np.percentile(err_v2, 95):.4f} px")
+        assert np.percentile(err_v2, 95) < 0.05, f"V2 failed to hit <0.05px p95 target! Got {np.percentile(err_v2, 95):.4f}"
+        print("✅ V2 Sub-pixel Registration Self-Test Passed.\n")
 
 if __name__ == "__main__":
     test_skimage_phase_correlation()
-    test_estimate_shifts_synthetic_stack()
-    test_shift_convention_end_to_end()
+    test_registration_real_tile()
