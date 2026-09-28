@@ -1,29 +1,38 @@
 import os, sys, torch, numpy as np
 from pathlib import Path
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from core.model.mfsr import MFSR
 from core.audit.auditor import Tile, audit
 
-def run_phantom_benchmark():
-    print("👻 --- RUNNING PHANTOM BENCHMARK ---")
-    
+def run_real_phantom_benchmark():
+    print("👻 --- RUNNING PHANTOM BENCHMARK (SOBEL FALLBACK) ---")
     device = torch.device("cpu")
+    
+    # 1. Load Model
     model = MFSR(num_optical_bands=4, num_sar_bands=2, scale=4).to(device)
     model.load_state_dict(torch.load("abyssos_weights/best_finetuned.pt", map_location=device))
     model.eval()
 
-    files = list(Path("abyssos_data/train").glob("*.npz"))[:5]
+    # 2. Load visually confirmed empty tiles ONLY
+    empty_file = Path("tests/fixtures/empty_tiles.txt")
+    if not empty_file.exists():
+        print("❌ Run find_empty_tiles.py first!")
+        return
+        
+    with open(empty_file, "r") as f:
+        valid_tiles = set(f.read().splitlines())
+        
+    files = [f for f in Path("abyssos_data/train").glob("*.npz") if f.name in valid_tiles]
+    
     if not files:
-        print("❌ No data found.")
+        print("❌ No confirmed empty tiles found in abyssos_data/train.")
         return
 
     import json
     with open("weights/taus.json") as f: taus = json.load(f)
-    tc, tv = taus['tau_c'], taus['tau_v']
 
-    total_empty_pixels = 0
-    total_hallucinations = 0
-    caught_by_auditor = 0
+    total_empty, total_ph, caught = 0, 0, 0
 
     with torch.no_grad():
         for f in files:
@@ -35,32 +44,25 @@ def run_phantom_benchmark():
             )
             ar = audit(model, tile, scale=4)
             
-            empty_mask = torch.zeros(256, 256, dtype=torch.bool)
-            empty_mask[128:, :] = True 
+            empty_mask = torch.ones(256, 256, dtype=torch.bool)
             
-            # FIX: Calculate edges and pad back up to 256x256
+            # Sobel fallback (mathematical structural edges)
             edges = torch.abs(ar.sr[:, 1:, 1:] - ar.sr[:, :-1, :-1]).mean(dim=0)
             edges = torch.nn.functional.pad(edges, (0, 1, 0, 1))
+            detected_objects = edges > (edges.mean() + edges.std() * 2)
             
-            edge_threshold = edges.mean() + (edges.std() * 2)
-            detected_objects = (edges > edge_threshold)
-            
-            hallucinated_pixels = (detected_objects & empty_mask).sum().item()
-            prior_only_mask = (ar.v.squeeze() > tv) | (ar.c.squeeze() > tc)
-            caught = (detected_objects & empty_mask & prior_only_mask).sum().item()
-            
-            total_empty_pixels += empty_mask.sum().item()
-            total_hallucinations += hallucinated_pixels
-            caught_by_auditor += caught
+            total_empty += empty_mask.sum().item()
+            total_ph += (detected_objects & empty_mask).sum().item()
+            caught += (detected_objects & empty_mask & ((ar.v.squeeze() > taus['tau_v']) | (ar.c.squeeze() > taus['tau_c']))).sum().item()
 
-    raw_phantom_rate = (total_hallucinations / total_empty_pixels) * 100 if total_empty_pixels > 0 else 0
-    abyssos_phantom_rate = ((total_hallucinations - caught_by_auditor) / total_empty_pixels) * 100 if total_empty_pixels > 0 else 0
-    flagged_pct = (caught_by_auditor / total_hallucinations) * 100 if total_hallucinations > 0 else 100.0
+    raw_phantom_rate = (total_ph / total_empty) * 100 if total_empty > 0 else 0
+    abyssos_phantom_rate = ((total_ph - caught) / total_empty) * 100 if total_empty > 0 else 0
+    flagged_pct = (caught / total_ph) * 100 if total_ph > 0 else 100.0
 
-    print(f"\n📊 BENCHMARK RESULTS (Tested on {len(files)} tiles)")
+    print(f"\n📊 BENCHMARK RESULTS (n={len(files)} visually-confirmed tiles)")
     print(f"Standard AI Phantom Rate: {raw_phantom_rate:.2f}% (Hallucinated false details)")
     print(f"Ábyssos Phantom Rate    : {abyssos_phantom_rate:.2f}% (After Auditor filtering)")
     print(f"-> The Truth Auditor successfully flagged {flagged_pct:.1f}% of hallucinations as PRIOR-ONLY.")
 
 if __name__ == "__main__":
-    run_phantom_benchmark()
+    run_real_phantom_benchmark()
