@@ -5,6 +5,7 @@ from pystac_client import Client
 import planetary_computer
 from collections import Counter
 import odc.stac
+import pandas as pd
 
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
@@ -23,7 +24,6 @@ def fetch_s2_stack(bbox, start, end, max_cloud=60):
     if not items:
         raise ValueError("No S2 items found.")
 
-    # Sort by cloud cover and take the best 8 to keep download fast and memory low
     items.sort(key=lambda x: x.properties.get("eo:cloud_cover", 100))
     items = items[:8]
     print(f"🛰️ Selected {len(items)} clearest passes.")
@@ -37,7 +37,6 @@ def fetch_s2_stack(bbox, start, end, max_cloud=60):
         bands=["blue", "green", "red", "nir", "scl"],
         resolution=10,
         groupby="solar_day"
-        # FIX: Removed 'chunks' to prevent Windows Dask deadlocks
     )
     
     scaled_vars = {}
@@ -48,7 +47,8 @@ def fetch_s2_stack(bbox, start, end, max_cloud=60):
     lr = lr.transpose("time", "band", "y", "x").values
     scl = ds["scl"].values
     
-    dates = [str(t.date()) for t in ds.time.values]
+    # FIX: Safely convert numpy datetime64 to standard string dates using pandas
+    dates = [str(pd.to_datetime(t).date()) for t in ds.time.values]
     epsg = ds.rio.crs.to_epsg() if ds.rio.crs else 32600
     
     return lr, scl, dates, epsg, ds.geobox
@@ -57,7 +57,6 @@ def fetch_s1_sar(bbox, ref_date, s2_geobox):
     print(f"📡 Querying Planetary Computer for Sentinel-1 (Nearest to {ref_date})...")
     s1_client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1", modifier=planetary_computer.sign_inplace)
     
-    import pandas as pd
     t_ref = pd.to_datetime(ref_date)
     start, end = (t_ref - pd.Timedelta(days=5)).strftime("%Y-%m-%d"), (t_ref + pd.Timedelta(days=5)).strftime("%Y-%m-%d")
 
