@@ -5,7 +5,6 @@ from pystac_client import Client
 import planetary_computer
 from collections import Counter
 import odc.stac
-import pandas as pd
 
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
@@ -47,8 +46,8 @@ def fetch_s2_stack(bbox, start, end, max_cloud=60):
     lr = lr.transpose("time", "band", "y", "x").values
     scl = ds["scl"].values
     
-    # FIX: Vectorized pandas datetime conversion (100% foolproof)
-    dates = pd.to_datetime(ds.time.values).strftime('%Y-%m-%d').tolist()
+    # FIX: Robust numpy date conversion (handles 1-D arrays natively)
+    dates = np.datetime_as_string(np.atleast_1d(ds.time.values), unit="D").tolist()
     epsg = ds.rio.crs.to_epsg() if ds.rio.crs else 32600
     
     return lr, scl, dates, epsg, ds.geobox
@@ -57,6 +56,7 @@ def fetch_s1_sar(bbox, ref_date, s2_geobox):
     print(f"📡 Querying Planetary Computer for Sentinel-1 (Nearest to {ref_date})...")
     s1_client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1", modifier=planetary_computer.sign_inplace)
     
+    import pandas as pd
     t_ref = pd.to_datetime(ref_date)
     start, end = (t_ref - pd.Timedelta(days=5)).strftime("%Y-%m-%d"), (t_ref + pd.Timedelta(days=5)).strftime("%Y-%m-%d")
 
