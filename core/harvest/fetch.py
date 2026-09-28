@@ -47,8 +47,8 @@ def fetch_s2_stack(bbox, start, end, max_cloud=60):
     lr = lr.transpose("time", "band", "y", "x").values
     scl = ds["scl"].values
     
-    # FIX: Safely convert numpy datetime64 to standard string dates using pandas
-    dates = [str(pd.to_datetime(t).date()) for t in ds.time.values]
+    # FIX: Vectorized pandas datetime conversion (100% foolproof)
+    dates = pd.to_datetime(ds.time.values).strftime('%Y-%m-%d').tolist()
     epsg = ds.rio.crs.to_epsg() if ds.rio.crs else 32600
     
     return lr, scl, dates, epsg, ds.geobox
